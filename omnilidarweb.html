@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>omniLidar Web Control</title>
+    <style>
+        body {
+            background-color: #FFD700;
+            font-family: Arial, sans-serif;
+            margin: 0;
+            display: flex;
+            text-align: center;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            padding: 20px;
+        }
+
+        .label {
+            padding-left: 0px;
+            font-size: 20px;
+        }
+
+        .input {
+            padding: 5px;
+            width: 30%;
+        }
+
+        .center-button {
+            margin-top: 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            border-radius: 0;
+            cursor: pointer;
+        }
+
+        #graphCanvas {
+            max-width: 90%;
+            height: auto;
+            margin-top: 20px;
+            border: 2px solid red;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>omniLidar Web Control</h1>
+    <div class="container">
+        <div>
+            <label class="label" for="lidarTime">Lidar - Time of measure:</label>
+            <input class="input" type="number" id="lidarTime">
+        </div>
+
+        <div>
+            <label class="label" for="measTimePerRev">Meas - Time of Revolution:</label>
+            <input class="input" type="number" id="measTimePerRev">
+        </div>
+    </div>
+    <div class="container">
+        <div>
+            <label class="label" for="lidarMaxDistance">Lidar - Max meas distance:</label>
+            <input class="input" type="number" id="lidarMaxDistance">
+        </div>
+        <div>
+            <label class="label" for="measNumPerRev">Meas - Num per revolution:</label>
+            <input class="input" type="number" id="measNumPerRev">
+        </div>
+    </div>
+    <button class="center-button">Guardar</button>
+
+    <canvas id='graphCanvas' width='500' height='500'></canvas>
+    <script>
+        var canvas = document.getElementById('graphCanvas');
+        var ctx = canvas.getContext('2d');
+        ctx.fillStyle = 'lightgray';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = 'blue';
+
+        // Draw coordinate axis and circles
+        var centerX = canvas.width / 2;
+        var centerY = canvas.height / 2;
+        var radius = Math.min(centerX, centerY) - 20;
+
+        // Draw coordinate axis
+        ctx.strokeStyle = 'black';
+        ctx.beginPath();
+        ctx.moveTo(centerX, 0);
+        ctx.lineTo(centerX, canvas.height);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(0, centerY);
+        ctx.lineTo(canvas.width, centerY);
+        ctx.stroke();
+
+        // Draw lines at 45 degrees
+        ctx.strokeStyle = 'green';
+        ctx.beginPath();
+        ctx.moveTo(centerX - radius, centerY + radius);
+        ctx.lineTo(centerX + radius, centerY - radius);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(centerX - radius, centerY - radius);
+        ctx.lineTo(centerX + radius, centerY + radius);
+        ctx.stroke();
+
+
+        // Draw circles representing radians
+        ctx.strokeStyle = 'gray';
+        var textdistance = 0;
+        for (var i = 1; i <= 6; i++) {
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius * (i / 6), 0, 2 * Math.PI);
+            ctx.stroke();
+            ctx.fillText(textdistance, centerX + radius * (i / 6), centerY-5);
+            textdistance += Math.floor(canvas.width/6);
+        }
+
+        ctx.strokeStyle = 'black';
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+        ctx.stroke();
+
+    </script>
+</body>
+
+</html>
