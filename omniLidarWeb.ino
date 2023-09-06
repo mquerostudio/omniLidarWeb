@@ -10,13 +10,10 @@ WebServer server(80);
 WebSocketsServer webSocket(81);  // create a websocket server on port 81
 
 
-int lidarTime = 0;
-int measTimePerRev = 0;
-int lidarMaxDistance = 2000;
-int measNumPerRev = 0;
+int currentLidarTime = 0, currentMeasTimePerRev = 0, currentLidarMaxDistance = 2000, currentMeasNumPerRev = 0;
+int toPutLidarTime = 0, toPutMeasTimePerRev = 0, toPutLidarMaxDistance = 2000, toPutMeasNumPerRev = 0;
 
-bool isStarted = false;
-bool isStopped = false;
+bool isPutNewValues = false, isStarted = false;
 
 const int maxPoints = 10;
 float points[maxPoints][2], pointsMod[maxPoints][2];
@@ -65,9 +62,9 @@ const char* htmlContent = R"(
 
         .center-button {
             margin-top: 20px;
-            background-color: #cc6600;
+            background-color: #cc9900;
             color: white;
-            border: none;
+            border: 2px solid black;
             padding: 15px 32px;
             text-align: center;
             text-decoration: none;
@@ -78,29 +75,34 @@ const char* htmlContent = R"(
         }
 
         .center-button[disabled] {
-            background-color: #ffe0b3;
+            background-color: #ffd966;
             cursor: not-allowed; /* optional: change the cursor to indicate the button is disabled */
         }
 
 
         .start-button {
             margin-right: 10px;
-            background-color: green;
+            background-color: #339933;
             color: white;
-            border: none;
+            border: 2px solid black;
             padding: 15px 32px;
             text-align: center;
             text-decoration: none;
             display: inline-block;
             font-size: 16px;
             cursor: pointer;
+        }
+
+        .start-button[disabled] {
+            background-color: #8cd98c;
+            cursor: not-allowed; /* optional: change the cursor to indicate the button is disabled */
         }
 
         .stop-button {
             margin-left: 10px;
-            background-color: red;
+            background-color: #cc3300;
+            border: 2px solid black;
             color: white;
-            border: none;
             padding: 15px 32px;
             text-align: center;
             text-decoration: none;
@@ -109,6 +111,17 @@ const char* htmlContent = R"(
             cursor: pointer;
         }
 
+        .stop-button[disabled] {
+            background-color: #ff8c66;
+            cursor: not-allowed; /* optional: change the cursor to indicate the button is disabled */
+        }
+
+        .canvas-terminal-container {
+            display: flex;
+            margin-top: 20px;
+            justify-content: space-between;
+            align-items: center;
+        }
 
         #graphCanvas {
             max-width: 90%;
@@ -116,6 +129,20 @@ const char* htmlContent = R"(
             margin-top: 20px;
             border: 2px solid red;
         }
+
+        #dataTerminal {
+            overflow-y: scroll;
+            height: 500px;
+            width: 300px;
+            margin-left: 40px;
+            border: 2px solid black;
+            background-color: #ffd966;
+            color: black;
+            margin-top: 20px;
+            font-family: monospace;
+            font-size: 15px;
+        }
+
     </style>
 </head>
 
@@ -145,16 +172,21 @@ const char* htmlContent = R"(
         </div>
         <button type="button" class="center-button start-button" id="startBtn">Start</button>
         <button type="submit" class="center-button">Save</button>
-        <button type="button" class="center-button stop-button" id="stopBtn">Stop</button>
+        <button type="button" class="center-button stop-button" id="stopBtn" disabled>Stop</button>
     </form>
 
-    <canvas id='graphCanvas' width='500' height='500'></canvas>
+    <div class="canvas-terminal-container">
+        <canvas id='graphCanvas' width='500' height='500'></canvas>
+        <div id="dataTerminal"></div>
+    </div>
+
     <script>
 
         var lidarMaxDistance = 2000;  // Initial default value
 
         var canvas = document.getElementById('graphCanvas');
         var ctx = canvas.getContext('2d');
+
         function drawTemplate(){
 
             ctx.fillStyle = 'lightgray';
@@ -209,39 +241,55 @@ const char* htmlContent = R"(
             ctx.clearRect(0, 0, canvas.width, canvas.height);
         }
 
+        function appendToTerminal(data) {
+            const terminal = document.getElementById("dataTerminal");
+            const entry = document.createElement("div");
+            entry.textContent = data;
+            terminal.appendChild(entry);
+            terminal.scrollTop = terminal.scrollHeight; // Scroll to bottom
+        }
+
         function drawPoints(points) {
             clearCanvas();
             drawTemplate();
             
             const scaleFactor = canvas.width / (2*lidarMaxDistance);
 
+            appendToTerminal("New Data:");
             for(let i = 0; i < points.length; i++) {
-                const x = (points[i][0]*scaleFactor + canvas.width / 2); 
-                const y = (points[i][1]*scaleFactor + canvas.height / 2);
+                const x = (points[i][0] * Math.cos(points[i][1])) * scaleFactor + canvas.width / 2; 
+                const y = (points[i][0] * Math.sin(points[i][1])) * scaleFactor + canvas.height / 2;
 
                 ctx.beginPath();
-                ctx.arc(x, y, 2, 0, 2 * Math.PI); 
+                ctx.arc(x, y, 5, 0, 5 * Math.PI); 
                 ctx.fillStyle = 'red'; 
                 ctx.fill();
+                appendToTerminal(`Dis: ${points[i][0].toFixed(2)}, Ang: ${points[i][1].toFixed(2)}`);
             }
         }
-
 
         var socket = new WebSocket('ws://' + location.hostname + ':81/');
         socket.onmessage = function(event) {
             const data = event.data;
             
-            if (data === "true") { // if isStopped is true
-                document.querySelector(".center-button[type='submit']").disabled = false; // Enable save button
-
-            } else if (data === "false") {
-                document.querySelector(".center-button[type='submit']").disabled = true; // Disable save button
+            if (data.startsWith("lidarMaxDistanceUpdate:")) {
+                // Extract and update the lidarMaxDistance
+                lidarMaxDistance = parseInt(data.split(":")[1], 10);
+                drawTemplate();  // Redraw the template with updated value
+            } else if (data === "isStopped") { // if isStopped is true
+                document.querySelector(".center-button[type='submit']").disabled = false;
+                document.querySelector(".stop-button[type='button']").disabled = true;
+                document.querySelector(".start-button[type='button']").disabled = false;
+            } else if (data === "isStarted") {
+                document.querySelector(".center-button[type='submit']").disabled = true;
+                document.querySelector(".stop-button[type='button']").disabled = false;
+                document.querySelector(".start-button[type='button']").disabled = true;
                 
             } else if (data !== "noCommand") {
                 const pointStrings = data.split("|");
                 const pointArray = pointStrings.map(str => {
-                    const coords = str.split(",");
-                    return [parseInt(coords[0]), parseInt(coords[1])];
+                  const coords = str.split(",");
+                  return [parseFloat(coords[0]), parseFloat(coords[1])];
                 });
                 drawPoints(pointArray);
             }
@@ -299,20 +347,24 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
           // Parse JSON payload for form data
           DynamicJsonDocument doc(1024);
           deserializeJson(doc, (char*)payload);
-          lidarTime = doc["lidarTime"];
-          measTimePerRev = doc["measTimePerRev"];
-          lidarMaxDistance = doc["lidarMaxDistance"];
-          measNumPerRev = doc["measNumPerRev"];
+          toPutLidarTime = doc["lidarTime"];
+          toPutMeasTimePerRev = doc["measTimePerRev"];
+          toPutLidarMaxDistance = doc["lidarMaxDistance"];
+          toPutMeasNumPerRev = doc["measNumPerRev"];
           // Print the values (you can remove this if not needed)
           Serial.println("Values saved via WebSocket:");
           Serial.print("Lidar Time: ");
-          Serial.println(lidarTime);
+          Serial.println(toPutLidarTime);
           Serial.print("Meas Time per Revolution: ");
-          Serial.println(measTimePerRev);
+          Serial.println(toPutMeasTimePerRev);
           Serial.print("Lidar Max Meas Distance: ");
-          Serial.println(lidarMaxDistance);
+          Serial.println(toPutLidarMaxDistance);
           Serial.print("Meas Num per Revolution: ");
-          Serial.println(measNumPerRev);
+          Serial.println(toPutMeasNumPerRev);
+
+          // Send updated lidarMaxDistance to frontend
+          String lidarMaxDistanceUpdate = "lidarMaxDistanceUpdate:" + String(toPutLidarMaxDistance);
+          webSocket.broadcastTXT(lidarMaxDistanceUpdate.c_str());
           return;
       }
 
@@ -320,15 +372,12 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
       if (msg == "start") {
         Serial.println("Start Button");
         isStarted = true;
-        isStopped = false;
+        webSocket.broadcastTXT("isStarted");
       } else if (msg == "stop") {
         Serial.println("Stop Button");
         isStarted = false;
-        isStopped = true;
+        webSocket.broadcastTXT("isStopped");
       }
-
-      String isStoppedStr = isStopped ? "true" : "false";
-      webSocket.broadcastTXT(isStoppedStr);
       break;
   }
 }
@@ -363,7 +412,7 @@ void loop() {
     float n = 0.0;
     String dataToSend = "";
     for (int i = 0; i < maxPoints; i++) {
-      points[i][0] = random(500, 2000);                    //Distance
+      points[i][0] = random(0, toPutLidarMaxDistance);                    //Distance
       points[i][1] = n;                                    //angle
       pointsMod[i][0] = points[i][0] * cos(points[i][1]);  //x points
       pointsMod[i][1] = points[i][0] * sin(points[i][1]);  //y points
@@ -371,7 +420,7 @@ void loop() {
       if (i > 0) {
         dataToSend += "|";
       }
-      dataToSend += String(pointsMod[i][0]) + "," + String(pointsMod[i][1]);
+      dataToSend += String(points[i][0]) + "," + String(points[i][1]);
       n = n + (2 * PI / maxPoints);
     }
     webSocket.broadcastTXT(dataToSend);
