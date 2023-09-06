@@ -1,18 +1,24 @@
 #include <WebServer.h>
+#include <WebSocketsServer.h>
+#include <math.h>
 
 const char* ssid = "TP-LINK_26619E";
 const char* password = "18670691";
 
 WebServer server(80);
+WebSocketsServer webSocket(81);  // create a websocket server on port 81
+
 
 int lidarTime = 0;
 int measTimePerRev = 0;
-int lidarMaxDistance = 0;
+int lidarMaxDistance = 2000;
 int measNumPerRev = 0;
-bool shouldDrawNewData = false;
 
-const int maxPoints = 50; // You can change this value to store more or less points
-int points[maxPoints][2]; // [][0] for X and [][1] for Y
+bool isStarted = false;
+bool isStopped = false;
+
+const int maxPoints = 10;
+float points[maxPoints][2], pointsMod[maxPoints][2];
 
 const char* htmlContent = R"(
 <!DOCTYPE html>
@@ -23,6 +29,10 @@ const char* htmlContent = R"(
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>omniLidar Web Control</title>
     <style>
+        h1 {
+          color: green;
+          font-size: 40px;
+        }
         body {
             background-color: #FFD700;
             font-family: Arial, sans-serif;
@@ -54,7 +64,7 @@ const char* htmlContent = R"(
 
         .center-button {
             margin-top: 20px;
-            background-color: #4CAF50;
+            background-color: #cc6600;
             color: white;
             border: none;
             padding: 15px 32px;
@@ -65,6 +75,39 @@ const char* htmlContent = R"(
             border-radius: 0;
             cursor: pointer;
         }
+
+        .center-button[disabled] {
+            background-color: #ffe0b3;
+            cursor: not-allowed; /* optional: change the cursor to indicate the button is disabled */
+        }
+
+
+        .start-button {
+            margin-right: 10px;
+            background-color: green;
+            color: white;
+            border: none;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
+        .stop-button {
+            margin-left: 10px;
+            background-color: red;
+            color: white;
+            border: none;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            cursor: pointer;
+        }
+
 
         #graphCanvas {
             max-width: 90%;
@@ -99,11 +142,16 @@ const char* htmlContent = R"(
                 <input class="input" type="number" id="measNumPerRev" name="measNumPerRev">
             </div>
         </div>
-        <button type="submit" class="center-button">Guardar</button>
+        <button type="button" class="center-button start-button" id="startBtn">Start</button>
+        <button type="submit" class="center-button">Save</button>
+        <button type="button" class="center-button stop-button" id="stopBtn">Stop</button>
     </form>
 
     <canvas id='graphCanvas' width='500' height='500'></canvas>
     <script>
+
+        var lidarMaxDistance = 2000;  // Initial default value
+
         var canvas = document.getElementById('graphCanvas');
         var ctx = canvas.getContext('2d');
         function drawTemplate(){
@@ -144,19 +192,15 @@ const char* htmlContent = R"(
 
             // Draw circles representing radians
             ctx.strokeStyle = 'gray';
+            var distanceBetweenCircles = lidarMaxDistance / 5;
             var textdistance = 0;
-            for (var i = 1; i <= 6; i++) {
+            for (var i = 1; i <= 5; i++) {
                 ctx.beginPath();
-                ctx.arc(centerX, centerY, radius * (i / 6), 0, 2 * Math.PI);
+                ctx.arc(centerX, centerY, radius * (i / 5), 0, 2 * Math.PI);
                 ctx.stroke();
-                ctx.fillText(textdistance, centerX + radius * (i / 6), centerY-5);
-                textdistance += Math.floor(canvas.width/6);
+                ctx.fillText(Math.round(textdistance) + "m", centerX + (radius - 20) * (i / 5), centerY-5);
+                textdistance += distanceBetweenCircles;
             }
-
-            ctx.strokeStyle = 'black';
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-            ctx.stroke();
         }
         
 
@@ -168,33 +212,47 @@ const char* htmlContent = R"(
             clearCanvas();
             drawTemplate();
             
+            const scaleFactor = canvas.width / (2*lidarMaxDistance);
+
             for(let i = 0; i < points.length; i++) {
-                // Draw each point on the canvas
-                const x = points[i][0];
-                const y = points[i][1];
+                const x = (points[i][0]*scaleFactor + canvas.width / 2); 
+                const y = (points[i][1]*scaleFactor + canvas.height / 2);
+
                 ctx.beginPath();
-                ctx.arc(x, y, 2, 0, 2 * Math.PI); // drawing a small circle as a point
-                ctx.fillStyle = 'red'; // color of the point
+                ctx.arc(x, y, 2, 0, 2 * Math.PI); 
+                ctx.fillStyle = 'red'; 
                 ctx.fill();
             }
         }
 
-        function checkCommand() {
-            fetch("/command")
-            .then(response => response.text())
-            .then(data => {
-                if (data !== "noCommand") {
-                    const pointStrings = data.split("|");
-                    const pointArray = pointStrings.map(str => {
-                        const coords = str.split(",");
-                        return [parseInt(coords[0]), parseInt(coords[1])];
-                    });
-                    drawPoints(pointArray);
-                }
-            });
+
+        var socket = new WebSocket('ws://' + location.hostname + ':81/');
+        socket.onmessage = function(event) {
+            const data = event.data;
+            
+            if (data === "true") { // if isStopped is true
+                document.querySelector(".center-button[type='submit']").disabled = false; // Enable save button
+
+            } else if (data === "false") {
+                document.querySelector(".center-button[type='submit']").disabled = true; // Disable save button
+                
+            } else if (data !== "noCommand") {
+                const pointStrings = data.split("|");
+                const pointArray = pointStrings.map(str => {
+                    const coords = str.split(",");
+                    return [parseInt(coords[0]), parseInt(coords[1])];
+                });
+                drawPoints(pointArray);
+            }
         }
 
-        setInterval(checkCommand, 500);  // Check every second
+        document.getElementById('startBtn').addEventListener('click', function() {
+            socket.send('start');
+        });
+
+        document.getElementById('stopBtn').addEventListener('click', function() {
+            socket.send('stop');
+        });
 
     </script>
 </body>
@@ -223,22 +281,34 @@ void handleRoot() {
   server.send(200, "text/html", htmlContent);
 }
 
-void handleCommand() {
-  if (shouldDrawNewData) {
-    String dataToSend = "";
-    for (int i = 0; i < maxPoints; i++) {
-      if (i > 0) {
-        dataToSend += "|"; // use | as a separator between points
+void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
+  switch (type) {
+    case WStype_DISCONNECTED:
+      Serial.printf("[%u] Disconnected!\n", num);
+      break;
+    case WStype_CONNECTED:
+      {
+        IPAddress ip = webSocket.remoteIP(num);
+        Serial.printf("[%u] Connected from %d.%d.%d.%d url: %s\n", num, ip[0], ip[1], ip[2], ip[3], payload);
       }
-      dataToSend += String(points[i][0]) + "," + String(points[i][1]);
-    }
-    server.send(200, "text/plain", dataToSend);
-    shouldDrawNewData = false;  // reset it after sending
-  } else {
-    server.send(200, "text/plain", "noCommand");
+      break;
+    case WStype_TEXT:
+      String msg = String((char*)payload);
+      if (msg == "start") {
+        Serial.println("Start Button");
+        isStarted = true;
+        isStopped = false;
+      } else if (msg == "stop") {
+        Serial.println("Stop Button");
+        isStarted = false;
+        isStopped = true;
+      }
+
+      String isStoppedStr = isStopped ? "true" : "false";
+      webSocket.broadcastTXT(isStoppedStr);
+      break;
   }
 }
-
 
 void setup() {
   Serial.begin(115200);
@@ -251,23 +321,36 @@ void setup() {
   Serial.println("Connected to WiFi");
 
   server.on("/", handleRoot);
-  server.on("/command", HTTP_GET, handleCommand);
   server.begin();
   Serial.println("HTTP server started");
+
+  webSocket.begin();
+  webSocket.onEvent(webSocketEvent);
+  Serial.println("WebSocket server started");
 }
 
 void loop() {
-    server.handleClient();
+  server.handleClient();
+  webSocket.loop();
 
-    static unsigned long lastTime = 0;
-    if (millis() - lastTime > 1000) {
-        lastTime = millis();
+  static unsigned long lastTime = 0;
+  if (millis() - lastTime > 1000) {
+    lastTime = millis();
 
-        // Generate random points
-        for(int i = 0; i < maxPoints; i++) {
-            points[i][0] = random(0, 500); // assuming canvas width is 500
-            points[i][1] = random(0, 500); // assuming canvas height is 500
-        }
-        shouldDrawNewData = true;
+    float n = 0.0;
+    String dataToSend = "";
+    for (int i = 0; i < maxPoints; i++) {
+      points[i][0] = random(500, 2000);                    //Distance
+      points[i][1] = n;                                    //angle
+      pointsMod[i][0] = points[i][0] * cos(points[i][1]);  //x points
+      pointsMod[i][1] = points[i][0] * sin(points[i][1]);  //y points
+
+      if (i > 0) {
+        dataToSend += "|";
+      }
+      dataToSend += String(pointsMod[i][0]) + "," + String(pointsMod[i][1]);
+      n = n + (2 * PI / maxPoints);
     }
+    webSocket.broadcastTXT(dataToSend);
+  }
 }
