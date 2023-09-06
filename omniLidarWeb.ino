@@ -1,5 +1,6 @@
 #include <WebServer.h>
 #include <WebSocketsServer.h>
+#include <ArduinoJson.h>
 #include <math.h>
 
 const char* ssid = "TP-LINK_26619E";
@@ -254,6 +255,23 @@ const char* htmlContent = R"(
             socket.send('stop');
         });
 
+        // Handle form submission
+        document.querySelector("form").addEventListener('submit', function(event) {
+            event.preventDefault();  // prevent default form submission
+
+            // Construct the form data object
+            var formData = {
+                lidarTime: document.getElementById("lidarTime").value,
+                measTimePerRev: document.getElementById("measTimePerRev").value,
+                lidarMaxDistance: document.getElementById("lidarMaxDistance").value,
+                measNumPerRev: document.getElementById("measNumPerRev").value
+            };
+
+            // Send the form data as a JSON string through the WebSocket
+            socket.send(JSON.stringify(formData));
+        });
+
+
     </script>
 </body>
 
@@ -261,23 +279,6 @@ const char* htmlContent = R"(
 )";
 
 void handleRoot() {
-  if (server.method() == HTTP_POST) {
-    lidarTime = server.arg("lidarTime").toInt();
-    measTimePerRev = server.arg("measTimePerRev").toInt();
-    lidarMaxDistance = server.arg("lidarMaxDistance").toInt();
-    measNumPerRev = server.arg("measNumPerRev").toInt();
-
-    Serial.println("Values saved:");
-    Serial.print("Lidar Time: ");
-    Serial.println(lidarTime);
-    Serial.print("Meas Time per Revolution: ");
-    Serial.println(measTimePerRev);
-    Serial.print("Lidar Max Meas Distance: ");
-    Serial.println(lidarMaxDistance);
-    Serial.print("Meas Num per Revolution: ");
-    Serial.println(measNumPerRev);
-  }
-
   server.send(200, "text/html", htmlContent);
 }
 
@@ -293,6 +294,28 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length)
       }
       break;
     case WStype_TEXT:
+
+      if (length > 0 && payload[0] == '{') {  // Check if payload is a JSON string (basic check)
+          // Parse JSON payload for form data
+          DynamicJsonDocument doc(1024);
+          deserializeJson(doc, (char*)payload);
+          lidarTime = doc["lidarTime"];
+          measTimePerRev = doc["measTimePerRev"];
+          lidarMaxDistance = doc["lidarMaxDistance"];
+          measNumPerRev = doc["measNumPerRev"];
+          // Print the values (you can remove this if not needed)
+          Serial.println("Values saved via WebSocket:");
+          Serial.print("Lidar Time: ");
+          Serial.println(lidarTime);
+          Serial.print("Meas Time per Revolution: ");
+          Serial.println(measTimePerRev);
+          Serial.print("Lidar Max Meas Distance: ");
+          Serial.println(lidarMaxDistance);
+          Serial.print("Meas Num per Revolution: ");
+          Serial.println(measNumPerRev);
+          return;
+      }
+
       String msg = String((char*)payload);
       if (msg == "start") {
         Serial.println("Start Button");
